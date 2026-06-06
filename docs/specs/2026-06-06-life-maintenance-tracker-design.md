@@ -32,6 +32,9 @@ Additional needs:
 - Capture vendor/contact info and per-completion cost for reporting.
 
 **Non-goals (v1)**
+- A dedicated "season window" recurrence type. Seasonal tasks (e.g. mowing,
+  active only spring–fall) are handled by **punting** the task to next season
+  when it goes dormant, rather than a first-class seasonal schedule.
 - Multi-user / sharing.
 - A hosted SaaS. This runs on the user's own always-on VPS.
 - Building around any specific external agent platform (e.g. "OpenClaw"). The
@@ -50,7 +53,7 @@ database; CLI, chat bot, cron sender, and (later) web are views/controllers.
          └── config.yaml         ← telegram token, chat id, schedule, timezone
                     │
                     ▼
-            core engine (pure Python)
+            core engine (pure Rust library)
    "given defs + completion log + today → what's due / overdue / prep-due"
                     │
         ┌───────────┼────────────┬─────────────┐
@@ -144,29 +147,52 @@ A task has exactly one recurrence type:
 Vendors are referenced by id so contact info is updated once and every task +
 past record points at current info.
 
-### `completions.jsonl` (append-only)
+### `completions.jsonl` (append-only event log)
+
+This file is an ordered, append-only **event log**. Each line is one of two
+event shapes, distinguished by its key:
 
 ```json
 {"id": "clean-drains", "done": "2026-05-01", "via": "telegram", "by": "roto-rooter", "cost_cents": 28500, "note": "Roots in main line"}
 {"id": "groceries", "done": "2026-06-05", "via": "cli", "by": "self"}
+{"id": "mow", "punt_to": "2027-04-01", "via": "cli"}
 ```
 
-- `id`, `done` (ISO date), `via` (cli|telegram|web|manual) — required.
+**Completion event** (`done` key):
+- `id`, `done` (ISO date), `via` (cli|telegram|web|manual|agent) — required.
 - `by` (`self` or a vendor id), `cost_cents` (integer cents — money is never a
   float), `note` (string) — optional. The CLI accepts `--cost` in dollars and
   converts to cents.
 
+**Punt event** (`punt_to` key):
+- `id`, `punt_to` (ISO date — the new next-due date), `via` — required.
+- A punt defers a task's next occurrence to an explicit date. Used for one-off
+  deferrals (travel, weather) and for **seasonal tasks** like mowing: punt the
+  task to next spring each fall. (v1 has no dedicated "season window"; punting
+  covers it — see Non-goals.)
+
+### Punt / deferral
+
+`lm punt <id> <date>` appends a punt event. The engine folds the event log in
+file order; a completion clears any pending punt, and a punt sets an explicit
+next-due override. So "complete after punt" → the completion wins; "punt after
+complete" → the punt wins.
+
 ### Status computation (the engine's one job)
 
-For each task: `last_done` = latest matching log line, else the `start` date (or
-none).
+The engine folds each task's events (from the append-only log, in file order) to
+resolve two values: `last_done` (max `done` date across completion events — robust
+to back-dated entries) and `punt_to` (set by the latest punt event, but **cleared
+by any later completion**). If neither exists, the anchor is the task's `start`
+date (or none).
 
-`next_due` is computed by a small **schedule abstraction** with two
-implementations, so downstream logic is identical:
-- **Relative:** `next_due = last_done + every`. Never done & no `start` → due now.
-- **Fixed:** `next_due` = the first calendar occurrence of `on` strictly after
-  `last_done` (after completion it advances to the next occurrence). Never done →
-  the first occurrence on/after `start` (or on/after today if no `start`).
+`next_due`:
+- If a `punt_to` override is active → `next_due = punt_to` (the punt wins).
+- Else computed by a small **schedule abstraction** with two implementations:
+  - **Relative:** `next_due = last_done + every`. Never done & no `start` → due now.
+  - **Fixed:** `next_due` = the first calendar occurrence of `on` strictly after
+    `last_done` (after completion it advances to the next occurrence). Never done →
+    the first occurrence on/after `start` (or on/after today if no `start`).
 
 Then, shared for both:
 - `prep_due = next_due − lead_time` (only if `lead_time` set)
@@ -177,31 +203,40 @@ Everything else is presentation.
 
 ## Components
 
+Rust crate (library-first; `main.rs` is a thin transport shell over `lib.rs`):
+
 ```
 lifemaint/
-  core/
-    models.py      # Task, Vendor, Completion dataclasses + YAML/JSONL parsing
-    schedule.py    # Relative + Fixed schedules → next_due(last_done, today); interval/date parsing
-    status.py      # the engine: defs + log + today → bucketed status (PURE, no I/O)
-    store.py       # read tasks/vendors, append completions, git commit
-  cli.py           # `lm` commands, all with --json
-  telegram/        # Phase 2 example only — NOT built in current scope
-    sender.py      # build digest, send message w/ inline "✅ Done" buttons (cron)
-    bot.py         # long-running; handles button taps & replies → store.complete()
-  web/             # Phase 3
-config.yaml        # token, chat_id, timezone, quiet hours, digest schedule
-tasks.yaml
-vendors.yaml
-completions.jsonl
+  Cargo.toml
+  rust-toolchain.toml
+  src/
+    lib.rs         # crate root: pub use of the public surface
+    error.rs       # Error enum (thiserror) for the library
+    schedule.rs    # Relative + Fixed schedules → next_due/first_due; interval/`on` parsing (jiff)
+    model.rs       # Task, Vendor, Completion, Punt domain structs + From<Raw…> conversions
+    schema.rs      # serde boundary types (deny_unknown_fields) for YAML/JSONL parsing
+    status.rs      # the engine: defs + event log + today → bucketed status (PURE, no I/O)
+    store.rs       # DataDir: read tasks/vendors, load event log, append, git commit
+    service.rs     # controller: list/due/done/punt/history/vendors/export/report
+    cli.rs         # clap commands, all with --json
+    main.rs        # thin: parse args → cli
+  tests/           # black-box integration tests over the public API
+data/
+  tasks.yaml
+  vendors.yaml
+  completions.jsonl
 ```
+
+Phase 2 (notifier) and Phase 3 (web) remain deferred; a future notifier is a
+pure consumer of `lm … --json` (likely a scheduled agent), not a Rust module here.
 
 ### Data flow
 
-- **Status (current scope):** `lm due` → `status.py` (due/overdue/prep) →
+- **Status (current scope):** `lm due` → `status` engine (due/overdue/prep) →
   printed as text or `--json`. A future notifier (Phase 2) consumes the same
   `lm due --json` and surfaces it on a channel.
 - **Complete:** `lm done <id> [--by --cost --note]` (or hand-edit the log) →
-  `store.py` appends a line + git-commits → next status recompute reflects it.
+  `store` appends a line + git-commits → next status recompute reflects it.
   `--by` defaults to `self`; `--cost`/`--note` optional, useful for vendor jobs.
 
 ## CLI surface
@@ -212,6 +247,7 @@ Principle: **every bit of data is reachable as stable JSON.**
 lm list [-q TERM] [--due] [--overdue] [--json]   # tasks + last done + next due; -q searches id/name/notes/vendor
 lm due [--json]                # current due/overdue/prep
 lm done <id> [--by V] [--cost N] [--note "..."] [--date D] [--via S]
+lm punt <id> <date> [--no-commit]   # defer next occurrence to <date> (seasonal/one-off)
 lm add                         # interactive add (or hand-edit tasks.yaml)
 lm history [--id X] [--since D] [--json]   # completion records w/ by/cost/note
 lm vendors [--json]            # contacts directory
@@ -234,13 +270,15 @@ lm report <kind> [--json]      # built-in summaries (see below)
 
 ## Testing
 
-- `status.py` is pure (inject `today`): recurrence math, overdue/prep bucketing,
-  lead-time edges exhaustively unit-tested with zero mocking.
-- `schedule.py` tested across all cadence forms — relative intervals AND fixed
-  schedules (year boundaries, Feb 29 / month-end `on` values, advance-after-done).
-- `store.py` tested against temp dirs (append + commit).
-- Telegram layer kept thin so most logic is covered without network.
-- TDD throughout.
+- `status` is pure (inject `today`): recurrence math, overdue/prep bucketing,
+  lead-time edges, and punt-fold semantics exhaustively unit-tested, no mocking.
+- `schedule` tested across all cadence forms — relative intervals AND fixed
+  schedules (year boundaries, Feb 29 / month-end `on` values, advance-after-done);
+  `proptest` encouraged for date round-trips.
+- `store` tested against temp dirs (`tempfile`) for load/append/commit; git ops
+  exercised against a real temp repo.
+- `cli` covered black-box via `assert_cmd`/`Command` over the built binary.
+- TDD throughout; `cargo clippy -D warnings` + `cargo fmt --check` clean.
 
 ## Phasing
 
