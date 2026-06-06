@@ -152,7 +152,7 @@ lifemaint/
     status.py      # the engine: defs + log + today → bucketed status (PURE, no I/O)
     store.py       # read tasks/vendors, append completions, git commit
   cli.py           # `lm` commands, all with --json
-  telegram/
+  telegram/        # Phase 2 example only — NOT built in current scope
     sender.py      # build digest, send message w/ inline "✅ Done" buttons (cron)
     bot.py         # long-running; handles button taps & replies → store.complete()
   web/             # Phase 3
@@ -164,12 +164,12 @@ completions.jsonl
 
 ### Data flow
 
-- **Reminder:** cron → `sender.py` → `status.py` (due/overdue/prep) → if
-  non-empty, Telegram message with a "✅ Done" button per item.
-- **Complete:** tap Done (or `lm done <id>`, or edit the log) → `store.py`
-  appends a line + git-commits → next status recompute reflects it. The Telegram
-  Done button defaults `by: self`; for a task that *has* a vendor, it follows up
-  to optionally capture vendor/cost — DIY tasks stay one-tap.
+- **Status (current scope):** `lm due` → `status.py` (due/overdue/prep) →
+  printed as text or `--json`. A future notifier (Phase 2) consumes the same
+  `lm due --json` and surfaces it on a channel.
+- **Complete:** `lm done <id> [--by --cost --note]` (or hand-edit the log) →
+  `store.py` appends a line + git-commits → next status recompute reflects it.
+  `--by` defaults to `self`; `--cost`/`--note` optional, useful for vendor jobs.
 
 ## CLI surface
 
@@ -212,11 +212,20 @@ lm report <kind> [--json]      # built-in summaries (see below)
 
 Each phase is independently useful.
 
-- **Phase 1 — Core + CLI.** Engine, data files (tasks/vendors/completions),
-  full `lm` command incl. `export`/`history`/`report`, full tests. Usable by
-  hand immediately; also the entire foundation any external client would use.
-- **Phase 2 — Telegram + cron.** Quiet daily digest with Done buttons + prep
-  nudges; vendor/cost follow-up. Deployed on the VPS. Delivers "it messages me"
-  + "one-tap done."
-- **Phase 3 — Web dashboard.** Read/complete overview page over the CLI/export.
-  Lowest urgency.
+- **Phase 1 — Core + CLI (current scope).** Engine, data files
+  (tasks/vendors/completions), full `lm` command incl. `due`/`done`/`export`/
+  `history`/`report`, full tests. Usable by hand immediately; also the entire
+  foundation any notifier or external client will use.
+- **Phase 2 — Notification layer (deferred, mechanism TBD).** How the digest
+  gets surfaced is intentionally undecided until the CLI exists. Leading
+  candidate: a scheduled **agent** that calls `lm due --json`, decides what's
+  worth surfacing, and messages the user — rather than a hand-built Telegram
+  bot. Whatever the mechanism, it is a pure consumer of the CLI; completions it
+  records use `via` to mark their source (e.g. `via: agent`). The CLI must
+  therefore expose everything the notifier needs (it does: `due --json`).
+- **Phase 3 — Web dashboard (deferred).** Read/complete overview page over the
+  CLI/export. Lowest urgency.
+
+Because the notification mechanism is deferred, the `telegram/` module in the
+component layout is **not built in the current scope** — it documents one
+possible Phase 2 shape, not a commitment.
