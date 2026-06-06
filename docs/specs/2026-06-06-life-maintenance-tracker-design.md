@@ -147,12 +147,14 @@ past record points at current info.
 ### `completions.jsonl` (append-only)
 
 ```json
-{"id": "clean-drains", "done": "2026-05-01", "via": "telegram", "by": "roto-rooter", "cost": 285, "note": "Roots in main line"}
+{"id": "clean-drains", "done": "2026-05-01", "via": "telegram", "by": "roto-rooter", "cost_cents": 28500, "note": "Roots in main line"}
 {"id": "groceries", "done": "2026-06-05", "via": "cli", "by": "self"}
 ```
 
 - `id`, `done` (ISO date), `via` (cli|telegram|web|manual) — required.
-- `by` (`self` or a vendor id), `cost` (number), `note` (string) — optional.
+- `by` (`self` or a vendor id), `cost_cents` (integer cents — money is never a
+  float), `note` (string) — optional. The CLI accepts `--cost` in dollars and
+  converts to cents.
 
 ### Status computation (the engine's one job)
 
