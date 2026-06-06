@@ -1,6 +1,7 @@
 #![warn(clippy::pedantic)]
 
 pub mod error;
+pub mod schedule;
 
 /// The crate version, from Cargo.
 #[must_use]
