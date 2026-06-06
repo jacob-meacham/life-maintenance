@@ -1,5 +1,7 @@
 #![warn(clippy::pedantic)]
 
+pub mod error;
+
 /// The crate version, from Cargo.
 #[must_use]
 pub fn version() -> &'static str {
