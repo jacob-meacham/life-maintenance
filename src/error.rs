@@ -57,5 +57,6 @@ mod tests {
             source: std::io::Error::new(std::io::ErrorKind::NotFound, "nope"),
         };
         assert!(e.to_string().contains("tasks.yaml"));
+        assert!(std::error::Error::source(&e).is_some());
     }
 }
