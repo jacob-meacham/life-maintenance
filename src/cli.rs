@@ -85,9 +85,6 @@ enum Command {
         id: String,
         /// The date to defer to (YYYY-MM-DD).
         to_date: String,
-        /// Treat this date as today (YYYY-MM-DD).
-        #[arg(long)]
-        today: Option<String>,
         /// Do not commit the change to git.
         #[arg(long)]
         no_commit: bool,
@@ -292,9 +289,8 @@ fn run(command: &Command) -> Result<(), CliError> {
         Command::Punt {
             id,
             to_date,
-            today,
             no_commit,
-        } => cmd_punt(&service, id, to_date, today.as_deref(), *no_commit),
+        } => cmd_punt(&service, id, to_date, *no_commit),
         Command::History { id, since, json } => {
             cmd_history(&service, id.as_deref(), since.as_deref(), *json)
         }
@@ -363,16 +359,7 @@ fn cmd_done(
 }
 
 /// Handle `punt`.
-fn cmd_punt(
-    service: &Service,
-    id: &str,
-    to_date: &str,
-    today: Option<&str>,
-    no_commit: bool,
-) -> Result<(), CliError> {
-    // `today` is parsed for validation/consistency even though punt does not
-    // need it, so a bad `--today` is reported rather than silently ignored.
-    let _ = resolve_today(today)?;
+fn cmd_punt(service: &Service, id: &str, to_date: &str, no_commit: bool) -> Result<(), CliError> {
     let to = parse_date(to_date)?;
     let punt = service.punt(id, to, "cli", !no_commit)?;
     println!("punted {} to {}", punt.id, punt.punt_to);

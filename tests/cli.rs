@@ -142,14 +142,7 @@ fn done_unknown_id_fails_with_stderr() {
 fn punt_defers_next_due_and_marks_ok() {
     let dir = sample_dir();
     lm(dir.path())
-        .args([
-            "punt",
-            "clean-drains",
-            "2026-09-01",
-            "--today",
-            "2026-06-06",
-            "--no-commit",
-        ])
+        .args(["punt", "clean-drains", "2026-09-01", "--no-commit"])
         .assert()
         .success();
     let value = stdout_json(lm(dir.path()).args([
