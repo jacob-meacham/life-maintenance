@@ -266,6 +266,7 @@ fn config_set_then_show_json_reports_config_source() {
         .assert()
         .success();
     let value = stdout_json(lm_unconfigured(home.path()).args(["config", "show", "--json"]));
+    assert_eq!(value["configured"], true);
     assert_eq!(value["data_dir"], data.path().to_str().unwrap());
     assert_eq!(value["source"], "config");
 }
@@ -281,8 +282,19 @@ fn config_show_json_reports_env_source() {
             .env("LM_DATA_DIR", data.path())
             .args(["config", "show", "--json"]),
     );
+    assert_eq!(value["configured"], true);
     assert_eq!(value["source"], "env");
     assert_eq!(value["data_dir"], data.path().to_str().unwrap());
+}
+
+#[test]
+fn config_show_json_unconfigured_reports_uniform_shape() {
+    let home = tempdir().unwrap();
+    let value = stdout_json(lm_unconfigured(home.path()).args(["config", "show", "--json"]));
+    assert_eq!(value["configured"], false);
+    assert!(value["data_dir"].is_null());
+    assert!(value["source"].is_null());
+    assert!(value["config_path"].is_string());
 }
 
 #[test]

@@ -352,7 +352,12 @@ fn cmd_config_show(json: bool) -> Result<(), CliError> {
     match source {
         DataDirSource::Env => {
             if json {
-                print_pretty(&json!({ "data_dir": dir, "source": "env" }));
+                print_pretty(&json!({
+                    "configured": true,
+                    "data_dir": dir,
+                    "source": "env",
+                    "config_path": Value::Null,
+                }));
             } else {
                 println!("data_dir: {dir}");
                 println!("source: LM_DATA_DIR env");
@@ -361,7 +366,12 @@ fn cmd_config_show(json: bool) -> Result<(), CliError> {
         DataDirSource::ConfigFile(path) => {
             let path = path.display().to_string();
             if json {
-                print_pretty(&json!({ "data_dir": dir, "source": "config", "config_path": path }));
+                print_pretty(&json!({
+                    "configured": true,
+                    "data_dir": dir,
+                    "source": "config",
+                    "config_path": path,
+                }));
             } else {
                 println!("data_dir: {dir}");
                 println!("source: {path}");
@@ -377,8 +387,9 @@ fn config_show_unconfigured(json: bool) -> Result<(), CliError> {
     let config_path = config::config_file_in(&home).display().to_string();
     if json {
         print_pretty(&json!({
-            "data_dir": Value::Null,
             "configured": false,
+            "data_dir": Value::Null,
+            "source": Value::Null,
             "config_path": config_path,
         }));
     } else {
