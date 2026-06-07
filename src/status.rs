@@ -340,4 +340,36 @@ mod tests {
         assert_eq!(status.next_due, date(2026, 6, 6));
         assert_eq!(status.bucket, Bucket::Due);
     }
+
+    #[test]
+    fn multiple_tasks_resolved_independently() {
+        let groceries = task("id: groceries\nname: G\nevery: monthly\n");
+        let drains = task("id: drains\nname: D\nevery: yearly\n");
+        let events = [
+            done("groceries", "2026-06-01"),
+            done("drains", "2025-05-01"),
+        ];
+        let out = compute_status(&[groceries, drains], &events, date(2026, 6, 6)).unwrap();
+        assert_eq!(out.len(), 2);
+        let g = out.iter().find(|s| s.task.id == "groceries").unwrap();
+        let d = out.iter().find(|s| s.task.id == "drains").unwrap();
+        assert_eq!(g.next_due, date(2026, 7, 1)); // monthly from 06-01
+        assert_eq!(g.bucket, Bucket::Ok);
+        assert_eq!(d.next_due, date(2026, 5, 1)); // yearly from 05-01 -> overdue
+        assert_eq!(d.bucket, Bucket::Overdue);
+    }
+
+    #[test]
+    fn overdue_with_lead_time_is_overdue_not_prep() {
+        let tasks = [task(
+            "id: t\nname: T\nevery: yearly\non: \"10-15\"\nlead_time: 2 weeks\n",
+        )];
+        // last done long ago so the next occurrence is already past
+        let events = [done("t", "2024-10-15")];
+        let status = compute_status(&tasks, &events, date(2026, 6, 6)).unwrap();
+        let status = only(&status);
+        // next occurrence strictly after 2024-10-15 is 2025-10-15, before today -> overdue
+        assert_eq!(status.next_due, date(2025, 10, 15));
+        assert_eq!(status.bucket, Bucket::Overdue);
+    }
 }
