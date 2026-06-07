@@ -185,7 +185,15 @@ mod tests {
 
     #[test]
     fn parse_is_case_and_whitespace_insensitive() {
-        assert!(parse_interval("  Weekly ").is_ok());
-        assert!(parse_interval("3  Months").is_ok());
+        let anchor = date(2026, 1, 1);
+
+        assert_eq!(
+            relative("  Weekly ").next_due(anchor).unwrap(),
+            relative("weekly").next_due(anchor).unwrap(),
+        );
+        assert_eq!(
+            relative("3  Months").next_due(anchor).unwrap(),
+            relative("3 months").next_due(anchor).unwrap(),
+        );
     }
 }
