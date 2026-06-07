@@ -415,7 +415,24 @@ NOT JSON
             "{\"id\":\"x\",\"done\":\"2026-01-01\",\"punt_to\":\"2026-02-01\"}\n",
         );
         let data = DataDir::new(dir.path().to_path_buf());
-        assert!(matches!(load_events(&data), Err(Error::DataFile(_))));
+        match load_events(&data) {
+            Err(Error::DataFile(msg)) => assert!(msg.contains("line 1"), "msg: {msg}"),
+            other => panic!("expected DataFile, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn completion_with_bad_date_is_rejected_with_line_number() {
+        let dir = tempdir().unwrap();
+        write(
+            dir.path(),
+            EVENTS_FILE,
+            "{\"id\": \"x\", \"done\": \"not-a-date\"}\n",
+        );
+        let data = DataDir::new(dir.path().to_path_buf());
+        let err = load_events(&data).unwrap_err();
+        assert!(matches!(err, Error::DataFile(_)));
+        assert!(err.to_string().contains("line 1"), "err: {err}");
     }
 
     #[test]
