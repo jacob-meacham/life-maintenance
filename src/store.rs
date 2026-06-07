@@ -2,7 +2,11 @@
 //! directory, validating vendor references.
 
 use std::collections::HashSet;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+
+use serde::Serialize;
 
 use crate::error::{Error, Result};
 use crate::model::{Completion, Event, Punt, Task, Vendor};
@@ -213,15 +217,142 @@ pub fn load_all(d: &DataDir) -> Result<(Vec<Task>, Vec<Vendor>, Vec<Completion>)
     Ok((tasks, vendors, completions))
 }
 
+/// Serialization form of a completion event, omitting absent optional fields.
+#[derive(Serialize)]
+struct OutCompletion<'a> {
+    id: &'a str,
+    done: String,
+    via: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    by: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cost_cents: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    note: Option<&'a str>,
+}
+
+/// Serialization form of a punt event.
+#[derive(Serialize)]
+struct OutPunt<'a> {
+    id: &'a str,
+    punt_to: String,
+    via: &'a str,
+}
+
+/// Append a single JSON line to the event log, creating the file (and the data
+/// directory) if needed.
+///
+/// # Errors
+///
+/// Returns [`Error::Io`] if the data directory or log file cannot be created or
+/// written.
+fn append_line(d: &DataDir, line: &str) -> Result<()> {
+    std::fs::create_dir_all(&d.root).map_err(|source| Error::Io {
+        path: d.root.display().to_string(),
+        source,
+    })?;
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(d.events_path())
+        .map_err(|source| Error::Io {
+            path: EVENTS_FILE.to_string(),
+            source,
+        })?;
+    writeln!(file, "{line}").map_err(|source| Error::Io {
+        path: EVENTS_FILE.to_string(),
+        source,
+    })
+}
+
+/// Append a completion event to `completions.jsonl`.
+///
+/// Absent optional fields (`by`, `cost_cents`, `note`) are omitted from the
+/// emitted JSON. The file and data directory are created if missing.
+///
+/// # Errors
+///
+/// Returns [`Error::DataFile`] if the event cannot be serialized, or
+/// [`Error::Io`] if the log cannot be created or written.
+pub fn append_completion(d: &DataDir, c: &Completion) -> Result<()> {
+    let out = OutCompletion {
+        id: &c.id,
+        done: c.done.to_string(),
+        via: &c.via,
+        by: c.by.as_deref(),
+        cost_cents: c.cost_cents,
+        note: c.note.as_deref(),
+    };
+    let line = serde_json::to_string(&out)
+        .map_err(|e| Error::DataFile(format!("serialize completion: {e}")))?;
+    append_line(d, &line)
+}
+
+/// Append a punt event to `completions.jsonl`.
+///
+/// The file and data directory are created if missing.
+///
+/// # Errors
+///
+/// Returns [`Error::DataFile`] if the event cannot be serialized, or
+/// [`Error::Io`] if the log cannot be created or written.
+pub fn append_punt(d: &DataDir, p: &Punt) -> Result<()> {
+    let out = OutPunt {
+        id: &p.id,
+        punt_to: p.punt_to.to_string(),
+        via: &p.via,
+    };
+    let line =
+        serde_json::to_string(&out).map_err(|e| Error::DataFile(format!("serialize punt: {e}")))?;
+    append_line(d, &line)
+}
+
+/// Stage all changes in the data directory and commit them with `message`.
+///
+/// Returns `Ok(false)` (a non-fatal no-op) when the data directory is not a git
+/// repository, or when there is nothing to commit. Returns `Ok(true)` when a
+/// commit was created.
+///
+/// # Errors
+///
+/// Returns [`Error::Io`] if `git` cannot be spawned (e.g. it is not installed),
+/// or [`Error::DataFile`] if `git add` fails.
+pub fn commit(d: &DataDir, message: &str) -> Result<bool> {
+    if !d.root.join(".git").exists() {
+        return Ok(false);
+    }
+    let add = std::process::Command::new("git")
+        .args(["add", "-A"])
+        .current_dir(&d.root)
+        .status()
+        .map_err(|source| Error::Io {
+            path: "git".to_string(),
+            source,
+        })?;
+    if !add.success() {
+        return Err(Error::DataFile("git add failed".into()));
+    }
+    let output = std::process::Command::new("git")
+        .args(["commit", "-m", message])
+        .current_dir(&d.root)
+        .output()
+        .map_err(|source| Error::Io {
+            path: "git".to_string(),
+            source,
+        })?;
+    Ok(output.status.success())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        load_all, load_completions, load_events, load_tasks, load_vendors, DataDir, EVENTS_FILE,
-        TASKS_FILE, VENDORS_FILE,
+        append_completion, append_punt, commit, load_all, load_completions, load_events,
+        load_tasks, load_vendors, DataDir, EVENTS_FILE, TASKS_FILE, VENDORS_FILE,
     };
     use crate::error::Error;
-    use crate::model::Event;
+    use crate::model::{Completion, Event, Punt};
     use crate::schedule::Schedule;
+    use jiff::civil::date;
     use std::fs;
     use std::path::Path;
     use tempfile::{tempdir, TempDir};
@@ -252,6 +383,24 @@ mod tests {
 
     fn write(dir: &Path, name: &str, contents: &str) {
         fs::write(dir.join(name), contents).unwrap();
+    }
+
+    /// Make a temp dir initialised as a git repo with a committer identity.
+    fn git_dir() -> TempDir {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        for args in [
+            vec!["init", "-q"],
+            vec!["config", "user.email", "t@e.com"],
+            vec!["config", "user.name", "T"],
+        ] {
+            std::process::Command::new("git")
+                .args(&args)
+                .current_dir(root)
+                .status()
+                .unwrap();
+        }
+        dir
     }
 
     /// Write the standard sample data set into a fresh temp dir.
@@ -444,6 +593,139 @@ NOT JSON
             Err(Error::DataFile(msg)) => assert!(msg.contains("unrecognized"), "msg: {msg}"),
             other => panic!("expected DataFile, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn append_completion_adds_one_line_and_round_trips() {
+        let dir = tempdir().unwrap();
+        write(dir.path(), EVENTS_FILE, SAMPLE_EVENTS);
+        let data = DataDir::new(dir.path().to_path_buf());
+        let before = load_completions(&data).unwrap().len();
+        let c = Completion {
+            id: "groceries".to_string(),
+            done: date(2026, 6, 6),
+            via: "cli".to_string(),
+            by: Some("Acme".to_string()),
+            cost_cents: Some(1234),
+            note: Some("did it".to_string()),
+        };
+        append_completion(&data, &c).unwrap();
+        let after = load_completions(&data).unwrap();
+        assert_eq!(after.len(), before + 1);
+        let last = after.last().unwrap();
+        assert_eq!(last.id, "groceries");
+        assert_eq!(last.done, date(2026, 6, 6));
+        assert_eq!(last.via, "cli");
+        assert_eq!(last.by, Some("Acme".to_string()));
+        assert_eq!(last.cost_cents, Some(1234));
+        assert_eq!(last.note, Some("did it".to_string()));
+    }
+
+    #[test]
+    fn append_completion_omits_none_fields() {
+        let dir = tempdir().unwrap();
+        let data = DataDir::new(dir.path().to_path_buf());
+        let c = Completion {
+            id: "groceries".to_string(),
+            done: date(2026, 6, 6),
+            via: "cli".to_string(),
+            by: None,
+            cost_cents: None,
+            note: None,
+        };
+        append_completion(&data, &c).unwrap();
+        let raw = fs::read_to_string(dir.path().join(EVENTS_FILE)).unwrap();
+        let line = raw.lines().last().unwrap();
+        assert!(!line.contains("cost_cents"), "line: {line}");
+        assert!(!line.contains("note"), "line: {line}");
+        assert!(!line.contains("\"by\""), "line: {line}");
+        assert!(line.contains("groceries") && line.contains("done") && line.contains("via"));
+    }
+
+    #[test]
+    fn append_completion_creates_file_when_missing() {
+        let dir = tempdir().unwrap();
+        let data = DataDir::new(dir.path().to_path_buf());
+        assert!(!dir.path().join(EVENTS_FILE).exists());
+        let c = Completion {
+            id: "groceries".to_string(),
+            done: date(2026, 6, 6),
+            via: "cli".to_string(),
+            by: None,
+            cost_cents: None,
+            note: None,
+        };
+        append_completion(&data, &c).unwrap();
+        assert!(dir.path().join(EVENTS_FILE).exists());
+        assert_eq!(load_completions(&data).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn append_punt_round_trips_via_load_events() {
+        let dir = tempdir().unwrap();
+        write(dir.path(), EVENTS_FILE, SAMPLE_EVENTS);
+        let data = DataDir::new(dir.path().to_path_buf());
+        let p = Punt {
+            id: "clean-drains".to_string(),
+            punt_to: date(2027, 4, 1),
+            via: "cli".to_string(),
+        };
+        append_punt(&data, &p).unwrap();
+        let events = load_events(&data).unwrap();
+        match events.last().unwrap() {
+            Event::Punt(punt) => {
+                assert_eq!(punt.id, "clean-drains");
+                assert_eq!(punt.punt_to, date(2027, 4, 1));
+            }
+            other @ Event::Completion(_) => panic!("expected Punt, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn commit_persists_a_commit_with_message() {
+        let dir = git_dir();
+        let data = DataDir::new(dir.path().to_path_buf());
+        let c = Completion {
+            id: "groceries".to_string(),
+            done: date(2026, 6, 6),
+            via: "cli".to_string(),
+            by: None,
+            cost_cents: None,
+            note: None,
+        };
+        append_completion(&data, &c).unwrap();
+        assert!(commit(&data, "add groceries").unwrap());
+        let log = std::process::Command::new("git")
+            .args(["log", "--oneline"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        let text = String::from_utf8(log.stdout).unwrap();
+        assert!(text.contains("add groceries"), "log: {text}");
+    }
+
+    #[test]
+    fn commit_is_noop_when_nothing_changed() {
+        let dir = git_dir();
+        let data = DataDir::new(dir.path().to_path_buf());
+        let c = Completion {
+            id: "groceries".to_string(),
+            done: date(2026, 6, 6),
+            via: "cli".to_string(),
+            by: None,
+            cost_cents: None,
+            note: None,
+        };
+        append_completion(&data, &c).unwrap();
+        assert!(commit(&data, "first").unwrap());
+        assert!(!commit(&data, "again").unwrap());
+    }
+
+    #[test]
+    fn commit_returns_false_when_not_a_repo() {
+        let dir = tempdir().unwrap();
+        let data = DataDir::new(dir.path().to_path_buf());
+        assert!(!commit(&data, "msg").unwrap());
     }
 
     #[test]
