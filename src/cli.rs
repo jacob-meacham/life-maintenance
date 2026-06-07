@@ -565,9 +565,20 @@ mod tests {
             assert_eq!(parse_cents(input), Ok(expected), "input: {input:?}");
         }
 
-        let err_cases = ["-5.00", "abc", "1.234", "", "1.2.3", "4.2a"];
-        for input in err_cases {
-            assert!(parse_cents(input).is_err(), "expected Err for {input:?}");
+        let err_cases = [
+            ("-5.00", "negative"),
+            ("abc", "bad dollar amount"),
+            ("1.234", "1 or 2 digits"),
+            ("", "must not be empty"),
+            ("1.2.3", "too many decimal points"),
+            ("4.2a", "1 or 2 digits"),
+        ];
+        for (input, expected_substring) in err_cases {
+            let err = parse_cents(input).expect_err(&format!("expected Err for {input:?}"));
+            assert!(
+                err.contains(expected_substring),
+                "input {input:?}: expected message to contain {expected_substring:?}, got {err:?}"
+            );
         }
     }
 
