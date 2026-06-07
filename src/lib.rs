@@ -4,6 +4,7 @@ pub mod error;
 pub mod model;
 pub mod schedule;
 pub mod schema;
+pub mod service;
 pub mod status;
 pub mod store;
 
