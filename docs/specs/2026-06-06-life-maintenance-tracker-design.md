@@ -246,14 +246,20 @@ Principle: **every bit of data is reachable as stable JSON.**
 ```
 lm list [-q TERM] [--due] [--overdue] [--json]   # tasks + last done + next due; -q searches id/name/notes/vendor
 lm due [--json]                # current due/overdue/prep
-lm done <id> [--by V] [--cost N] [--note "..."] [--date D] [--via S]
-lm punt <id> <date> [--no-commit]   # defer next occurrence to <date> (seasonal/one-off)
-lm add                         # interactive add (or hand-edit tasks.yaml)
+lm done <id> [--by V] [--cost DOLLARS] [--note "..."] [--on YYYY-MM-DD] [--no-commit]
+lm punt <id> <YYYY-MM-DD> [--no-commit]   # defer next occurrence to that date (seasonal/one-off)
 lm history [--id X] [--since D] [--json]   # completion records w/ by/cost/note
 lm vendors [--json]            # contacts directory
 lm export [--json]             # full denormalized dataset (tasks⋈completions⋈vendors)
 lm report <kind> [--json]      # built-in summaries (see below)
 ```
+
+Notes on the v1 CLI:
+- `lm done`: completion date is `--on` (defaults to today); `--cost` is in dollars,
+  stored as integer cents; `via` is always `cli` for this interface (no `--via`
+  flag — only the CLI writes in v1). `--no-commit` skips the git commit.
+- **Adding tasks** is by hand-editing `tasks.yaml` in v1; there is no `lm add`
+  command yet (deferred).
 
 - `export` emits the whole joined dataset with a documented, stable schema — the
   feed for any external dashboard. Dashboards never parse the raw files.
