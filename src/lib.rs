@@ -4,6 +4,7 @@
 //! Git files are the source of truth; the `lm` CLI is the canonical interface.
 
 pub mod cli;
+pub mod config;
 pub mod error;
 pub mod model;
 pub mod schedule;
