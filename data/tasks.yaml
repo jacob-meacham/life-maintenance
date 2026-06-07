@@ -1,0 +1,30 @@
+- id: groceries
+  name: Grocery shopping
+  every: weekly
+
+- id: clean-gutters
+  name: Clean out gutters
+  every: 6 months
+  lead_time: 2 weeks
+  prep:
+    - Check ladder is sound
+    - Buy gutter scoop if missing
+  notes: Back side clogs worst.
+
+- id: blow-out-sprinklers
+  name: Blow out sprinkler lines
+  every: yearly
+  on: "10-15"
+  lead_time: 2 weeks
+  vendor: green-lawn
+
+- id: clean-drains
+  name: Clean out drains
+  every: yearly
+  lead_time: 2 weeks
+  vendor: roto-rooter
+
+- id: mow-lawn
+  name: Mow the lawn
+  every: weekly
+  notes: Punt to spring when the season ends (lm punt mow-lawn <date>).

@@ -1,0 +1,8 @@
+- id: roto-rooter
+  name: Roto-Rooter
+  phone: "555-123-4567"
+  notes: Ask for Dave; flat rate for main line.
+
+- id: green-lawn
+  name: Green Lawn Irrigation
+  phone: "555-987-6543"
