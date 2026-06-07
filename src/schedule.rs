@@ -407,6 +407,8 @@ mod tests {
             ("yearly", OnSpec::MonthDay("10-40".into())),
             ("monthly", OnSpec::Day(0)),
             ("monthly", OnSpec::Day(32)),
+            ("yearly", OnSpec::Day(15)),
+            ("monthly", OnSpec::MonthDay("10-15".into())),
         ];
         for (every, on) in bad {
             assert!(
