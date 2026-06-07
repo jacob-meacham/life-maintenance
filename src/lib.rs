@@ -4,6 +4,7 @@ pub mod error;
 pub mod model;
 pub mod schedule;
 pub mod schema;
+pub mod status;
 
 /// The crate version, from Cargo.
 #[must_use]
