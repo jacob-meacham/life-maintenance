@@ -242,7 +242,8 @@ one holding `tasks.yaml`, `vendors.yaml`, `completions.jsonl`) is resolved at
 runtime, in precedence order:
 
 1. **`LM_DATA_DIR` env var** — highest priority; good for scripts/agents/cron.
-2. **`~/.life-maintenance/config.json`** — `{ "data_dir": "/path/to/log" }`.
+2. **`~/.config/life-maintenance/config.toml`** (TOML; honors
+   `XDG_CONFIG_HOME`) — `data_dir = "/path/to/log"`.
    Managed with `lm config set <path>` / inspected with `lm config show`.
 3. Otherwise → a clear "data directory not configured" error (no silent default,
    so code and data never get mixed by accident).
@@ -279,7 +280,7 @@ lm vendors [--json]            # contacts directory
 lm export [--json]             # full denormalized dataset (tasks⋈completions⋈vendors)
 lm report <kind> [--json]      # built-in summaries (see below)
 lm config show [--json]        # resolved data dir + where it came from
-lm config set <path>           # write data_dir into ~/.life-maintenance/config.json
+lm config set <path>           # write data_dir into ~/.config/life-maintenance/config.toml (TOML; honors XDG_CONFIG_HOME)
 ```
 
 Notes on the v1 CLI:

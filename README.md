@@ -40,8 +40,9 @@ Your real maintenance log lives in a separate, user-configured directory. `lm`
 resolves which directory to use with the precedence:
 
 1. the `LM_DATA_DIR` environment variable (if set and non-empty), then
-2. the `data_dir` key of `~/.life-maintenance/config.json`
-   (set it with `lm config set <path>`), then
+2. the `data_dir` key of the TOML config file at
+   `~/.config/life-maintenance/config.toml` (honoring `XDG_CONFIG_HOME`; the
+   file contains `data_dir = "..."`, set it with `lm config set <path>`), then
 3. an error if neither is configured.
 
 Set it once with:
@@ -115,8 +116,8 @@ date, and `--json` to emit machine-readable output on stdout.
   report.
 - `lm config show [--json]` — print the resolved data directory and its source
   (the `LM_DATA_DIR` env, or the config file path).
-- `lm config set <path>` — store `<path>` as the data directory in
-  `~/.life-maintenance/config.json`.
+- `lm config set <path>` — store `<path>` as the `data_dir` (TOML) in
+  `~/.config/life-maintenance/config.toml` (honors `XDG_CONFIG_HOME`).
 
 ## Seasonal tasks
 

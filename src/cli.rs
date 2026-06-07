@@ -141,7 +141,7 @@ enum ConfigCmd {
         #[arg(long)]
         json: bool,
     },
-    /// Set the data directory in ~/.life-maintenance/config.json.
+    /// Set the data directory in ~/.config/life-maintenance/config.toml.
     Set {
         /// The data directory path to store (verbatim).
         path: String,
@@ -383,8 +383,8 @@ fn cmd_config_show(json: bool) -> Result<(), CliError> {
 
 /// Report (to stdout, exit success) that no data dir is configured.
 fn config_show_unconfigured(json: bool) -> Result<(), CliError> {
-    let home = config::home_dir()?;
-    let config_path = config::config_file_in(&home).display().to_string();
+    let base = config::config_base_dir()?;
+    let config_path = config::config_file_in(&base).display().to_string();
     if json {
         print_pretty(&json!({
             "configured": false,
@@ -402,8 +402,8 @@ fn config_show_unconfigured(json: bool) -> Result<(), CliError> {
 
 /// Handle `config set`.
 fn cmd_config_set(path: &str) -> Result<(), CliError> {
-    let home = config::home_dir()?;
-    let written = config::write_data_dir(&home, Path::new(path))?;
+    let base = config::config_base_dir()?;
+    let written = config::write_data_dir(&base, Path::new(path))?;
     println!("wrote data_dir = {path} to {}", written.display());
     Ok(())
 }

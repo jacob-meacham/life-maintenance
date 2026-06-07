@@ -237,11 +237,15 @@ fn done_negative_cost_fails() {
         .failure();
 }
 
-/// A bare command with neither `LM_DATA_DIR` nor a config file, using `home`
-/// as an isolated `HOME` so the developer's real config is never touched.
+/// A bare command with neither `LM_DATA_DIR` nor an ambient `XDG_CONFIG_HOME`,
+/// using `home` as an isolated `HOME`. This makes the resolved config base
+/// `<home>/.config` and the config file `<home>/.config/life-maintenance/
+/// config.toml`, so the developer's (and CI's) real config is never touched.
 fn lm_unconfigured(home: &Path) -> Command {
     let mut cmd = Command::cargo_bin("lm").unwrap();
-    cmd.env_remove("LM_DATA_DIR").env("HOME", home);
+    cmd.env_remove("LM_DATA_DIR")
+        .env_remove("XDG_CONFIG_HOME")
+        .env("HOME", home);
     cmd
 }
 
@@ -265,10 +269,20 @@ fn config_set_then_show_json_reports_config_source() {
         .args(["config", "set", data.path().to_str().unwrap()])
         .assert()
         .success();
+    let config_file = home.path().join(".config/life-maintenance/config.toml");
+    assert!(
+        config_file.exists(),
+        "expected config at {}",
+        config_file.display()
+    );
     let value = stdout_json(lm_unconfigured(home.path()).args(["config", "show", "--json"]));
     assert_eq!(value["configured"], true);
     assert_eq!(value["data_dir"], data.path().to_str().unwrap());
     assert_eq!(value["source"], "config");
+    assert_eq!(
+        value["config_path"],
+        config_file.display().to_string().as_str()
+    );
 }
 
 #[test]
@@ -294,7 +308,13 @@ fn config_show_json_unconfigured_reports_uniform_shape() {
     assert_eq!(value["configured"], false);
     assert!(value["data_dir"].is_null());
     assert!(value["source"].is_null());
-    assert!(value["config_path"].is_string());
+    let config_path = value["config_path"].as_str().expect("config_path string");
+    let expected = home
+        .path()
+        .join(".config/life-maintenance/config.toml")
+        .display()
+        .to_string();
+    assert_eq!(config_path, expected);
 }
 
 #[test]
@@ -305,7 +325,7 @@ fn config_show_text_unconfigured_succeeds_and_shows_path() {
         .assert()
         .success()
         .stdout(
-            predicate::str::contains("not configured").and(predicate::str::contains("config.json")),
+            predicate::str::contains("not configured").and(predicate::str::contains("config.toml")),
         );
 }
 
