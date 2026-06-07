@@ -1,6 +1,7 @@
 #![warn(clippy::pedantic)]
 
 pub mod error;
+pub mod model;
 pub mod schedule;
 pub mod schema;
 
