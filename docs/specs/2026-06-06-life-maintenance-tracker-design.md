@@ -84,6 +84,11 @@ database; CLI, chat bot, cron sender, and (later) web are views/controllers.
    trivial. If query needs ever outgrow this, the escape hatch is a *derived,
    rebuildable* SQLite read-index — never the system of record.
 
+   **The data lives in a separate location from the application code.** The app
+   repo ships only `examples/` sample data; the real maintenance log is a
+   user-configured directory (its own repo, or a subdirectory inside an existing
+   repo). See Configuration.
+
 4. **CLI is the canonical interface; everything supports `--json`.** This is the
    single hook any future consumer (dashboards, external agents) needs. We don't
    design around any specific external tool, but nothing blocks one.
@@ -230,14 +235,35 @@ data/
 Phase 2 (notifier) and Phase 3 (web) remain deferred; a future notifier is a
 pure consumer of `lm … --json` (likely a scheduled agent), not a Rust module here.
 
+### Configuration & data directory
+
+The app code and the maintenance **log** are separate. The data directory (the
+one holding `tasks.yaml`, `vendors.yaml`, `completions.jsonl`) is resolved at
+runtime, in precedence order:
+
+1. **`LM_DATA_DIR` env var** — highest priority; good for scripts/agents/cron.
+2. **`~/.life-maintenance/config.json`** — `{ "data_dir": "/path/to/log" }`.
+   Managed with `lm config set <path>` / inspected with `lm config show`.
+3. Otherwise → a clear "data directory not configured" error (no silent default,
+   so code and data never get mixed by accident).
+
+The data directory may be **its own git repo** *or* **a subdirectory inside an
+existing repo**. The git auto-commit is therefore subdir-safe:
+
+- It detects the enclosing repo with `git rev-parse --show-toplevel` (works from
+  a subdir; if the dir is not in any repo, commit is a non-fatal no-op).
+- It stages and commits **only the three data files by pathspec** — never
+  `git add -A` — so writing the log inside an active repo never sweeps up the
+  user's unrelated staged changes.
+
 ### Data flow
 
 - **Status (current scope):** `lm due` → `status` engine (due/overdue/prep) →
   printed as text or `--json`. A future notifier (Phase 2) consumes the same
   `lm due --json` and surfaces it on a channel.
 - **Complete:** `lm done <id> [--by --cost --note]` (or hand-edit the log) →
-  `store` appends a line + git-commits → next status recompute reflects it.
-  `--by` defaults to `self`; `--cost`/`--note` optional, useful for vendor jobs.
+  `store` appends a line + git-commits (only the data files) → next status
+  recompute reflects it. `--by` defaults to `self`; `--cost`/`--note` optional.
 
 ## CLI surface
 
@@ -252,6 +278,8 @@ lm history [--id X] [--since D] [--json]   # completion records w/ by/cost/note
 lm vendors [--json]            # contacts directory
 lm export [--json]             # full denormalized dataset (tasks⋈completions⋈vendors)
 lm report <kind> [--json]      # built-in summaries (see below)
+lm config show [--json]        # resolved data dir + where it came from
+lm config set <path>           # write data_dir into ~/.life-maintenance/config.json
 ```
 
 Notes on the v1 CLI:
