@@ -11,6 +11,28 @@ drive scripts and other programs as easily as a terminal.
 For the full design and rationale, see
 [`docs/specs/2026-06-06-life-maintenance-tracker-design.md`](docs/specs/2026-06-06-life-maintenance-tracker-design.md).
 
+## Install
+
+Install the `lm` binary straight from git with cargo — it builds and drops `lm`
+into `~/.cargo/bin` (make sure that's on your `PATH`):
+
+```sh
+# SSH (this is a private repo; uses your GitHub SSH key)
+cargo install --git ssh://git@github.com/jacob-meacham/life-maintenance.git
+
+# HTTPS alternative (needs a credential helper / token with repo access)
+cargo install --git https://github.com/jacob-meacham/life-maintenance.git
+```
+
+Verify with `lm --version`. Useful flags:
+
+- `--force` — reinstall/update to the latest commit.
+- `--branch <name>` / `--tag <name>` / `--rev <sha>` — install a specific ref.
+
+After installing, point `lm` at your data with `lm config set <path>` (see
+[Data](#data)). To hack on the tool instead, clone and build from source —
+see [Build](#build).
+
 ## Build
 
 ```sh
