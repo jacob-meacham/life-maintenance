@@ -307,23 +307,62 @@ pub fn append_punt(d: &DataDir, p: &Punt) -> Result<()> {
     append_line(d, &line)
 }
 
-/// Stage all changes in the data directory and commit them with `message`.
+/// Stage and commit only the data files in the data directory, with `message`.
 ///
-/// Returns `Ok(false)` (a non-fatal no-op) when the data directory is not a git
-/// repository, or when there is nothing to commit. Returns `Ok(true)` when a
-/// commit was created.
+/// The data directory may be its own git repository *or* a subdirectory inside a
+/// larger, active repository. To stay safe in the latter case this function:
+///
+/// - Detects the enclosing repository with `git rev-parse --show-toplevel`
+///   (resolved from the data dir, not the current process directory). If the
+///   directory is not inside any git repository, this is a non-fatal no-op and
+///   returns `Ok(false)`.
+/// - Stages and commits **only** the data files (`tasks.yaml`, `vendors.yaml`,
+///   `completions.jsonl`) by pathspec — never `git add -A`. Committing by
+///   pathspec means any *other* staged or working-tree changes the user has in
+///   the enclosing repository are left untouched and uncommitted; only the data
+///   files are swept into the commit.
+/// - Considers only the data files that currently exist, so a missing optional
+///   file (e.g. no `vendors.yaml`) does not cause `git add` to fail on a
+///   non-existent pathspec. If none of the data files exist, returns `Ok(false)`.
+///
+/// Returns `Ok(false)` (a non-fatal no-op) when the directory is not in a git
+/// repository, when no data files exist, or when there is nothing to commit.
+/// Returns `Ok(true)` when a commit was created.
 ///
 /// # Errors
 ///
 /// Returns [`Error::Io`] if `git` cannot be spawned (e.g. it is not installed),
 /// or [`Error::DataFile`] if `git add` fails.
 pub fn commit(d: &DataDir, message: &str) -> Result<bool> {
-    if !d.root.join(".git").exists() {
+    let root = d.root.as_os_str();
+    // Detect the enclosing repository; resolve the repo from the data dir.
+    let toplevel = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+        .map_err(|source| Error::Io {
+            path: "git".to_string(),
+            source,
+        })?;
+    if !toplevel.status.success() {
         return Ok(false);
     }
+
+    // Stage and commit only the data files that actually exist, by pathspec.
+    let pathspecs: Vec<&str> = [TASKS_FILE, VENDORS_FILE, EVENTS_FILE]
+        .into_iter()
+        .filter(|name| d.root.join(name).exists())
+        .collect();
+    if pathspecs.is_empty() {
+        return Ok(false);
+    }
+
     let add = std::process::Command::new("git")
-        .args(["add", "-A"])
-        .current_dir(&d.root)
+        .arg("-C")
+        .arg(root)
+        .args(["add", "--"])
+        .args(&pathspecs)
         .status()
         .map_err(|source| Error::Io {
             path: "git".to_string(),
@@ -332,9 +371,12 @@ pub fn commit(d: &DataDir, message: &str) -> Result<bool> {
     if !add.success() {
         return Err(Error::DataFile("git add failed".into()));
     }
+
     let output = std::process::Command::new("git")
-        .args(["commit", "-m", message])
-        .current_dir(&d.root)
+        .arg("-C")
+        .arg(root)
+        .args(["commit", "-m", message, "--"])
+        .args(&pathspecs)
         .output()
         .map_err(|source| Error::Io {
             path: "git".to_string(),
@@ -726,6 +768,90 @@ NOT JSON
         let dir = tempdir().unwrap();
         let data = DataDir::new(dir.path().to_path_buf());
         assert!(!commit(&data, "msg").unwrap());
+    }
+
+    /// Run a git command in `root` and return its captured stdout as a string.
+    fn git_stdout(root: &Path, args: &[&str]) -> String {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(root)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?} failed");
+        String::from_utf8(out.stdout).unwrap()
+    }
+
+    #[test]
+    fn commit_works_when_data_dir_is_a_subdir_of_an_enclosing_repo() {
+        let dir = git_dir();
+        let root = dir.path();
+        let sub = root.join("maintenance");
+        fs::create_dir_all(&sub).unwrap();
+        let data = DataDir::new(sub.clone());
+        let c = Completion {
+            id: "groceries".to_string(),
+            done: date(2026, 6, 6),
+            via: "cli".to_string(),
+            by: None,
+            cost_cents: None,
+            note: None,
+        };
+        append_completion(&data, &c).unwrap();
+        assert!(commit(&data, "subdir commit").unwrap());
+
+        let log = git_stdout(root, &["log", "--oneline"]);
+        assert!(log.contains("subdir commit"), "log: {log}");
+        let files = git_stdout(root, &["show", "--name-only", "--format=", "HEAD"]);
+        assert!(
+            files.contains("maintenance/completions.jsonl"),
+            "files: {files}"
+        );
+    }
+
+    #[test]
+    fn commit_uses_pathspec_and_does_not_sweep_unrelated_staged_changes() {
+        let dir = git_dir();
+        let root = dir.path();
+        let sub = root.join("maintenance");
+        fs::create_dir_all(&sub).unwrap();
+
+        // An unrelated file staged in the enclosing repo.
+        fs::write(root.join("other.txt"), "unrelated\n").unwrap();
+        assert!(std::process::Command::new("git")
+            .args(["add", "other.txt"])
+            .current_dir(root)
+            .status()
+            .unwrap()
+            .success());
+
+        let data = DataDir::new(sub);
+        let c = Completion {
+            id: "groceries".to_string(),
+            done: date(2026, 6, 6),
+            via: "cli".to_string(),
+            by: None,
+            cost_cents: None,
+            note: None,
+        };
+        append_completion(&data, &c).unwrap();
+        assert!(commit(&data, "scoped commit").unwrap());
+
+        let files = git_stdout(root, &["show", "--name-only", "--format=", "HEAD"]);
+        assert!(
+            files.contains("maintenance/completions.jsonl"),
+            "files: {files}"
+        );
+        assert!(
+            !files.contains("other.txt"),
+            "other.txt must not be committed; files: {files}"
+        );
+
+        // other.txt remains staged (still present in the index, not in HEAD).
+        let staged = git_stdout(root, &["diff", "--cached", "--name-only"]);
+        assert!(
+            staged.contains("other.txt"),
+            "other.txt should still be staged; staged: {staged}"
+        );
     }
 
     #[test]
