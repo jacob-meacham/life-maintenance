@@ -236,3 +236,81 @@ fn done_negative_cost_fails() {
         .assert()
         .failure();
 }
+
+/// A bare command with neither `LM_DATA_DIR` nor a config file, using `home`
+/// as an isolated `HOME` so the developer's real config is never touched.
+fn lm_unconfigured(home: &Path) -> Command {
+    let mut cmd = Command::cargo_bin("lm").unwrap();
+    cmd.env_remove("LM_DATA_DIR").env("HOME", home);
+    cmd
+}
+
+#[test]
+fn list_unconfigured_fails_with_hint() {
+    let home = tempdir().unwrap();
+    lm_unconfigured(home.path())
+        .args(["list", "--today", "2026-06-06"])
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("not configured").and(predicate::str::contains("LM_DATA_DIR")),
+        );
+}
+
+#[test]
+fn config_set_then_show_json_reports_config_source() {
+    let home = tempdir().unwrap();
+    let data = tempdir().unwrap();
+    lm_unconfigured(home.path())
+        .args(["config", "set", data.path().to_str().unwrap()])
+        .assert()
+        .success();
+    let value = stdout_json(lm_unconfigured(home.path()).args(["config", "show", "--json"]));
+    assert_eq!(value["data_dir"], data.path().to_str().unwrap());
+    assert_eq!(value["source"], "config");
+}
+
+#[test]
+fn config_show_json_reports_env_source() {
+    let home = tempdir().unwrap();
+    let data = tempdir().unwrap();
+    let value = stdout_json(
+        Command::cargo_bin("lm")
+            .unwrap()
+            .env("HOME", home.path())
+            .env("LM_DATA_DIR", data.path())
+            .args(["config", "show", "--json"]),
+    );
+    assert_eq!(value["source"], "env");
+    assert_eq!(value["data_dir"], data.path().to_str().unwrap());
+}
+
+#[test]
+fn config_show_text_unconfigured_succeeds_and_shows_path() {
+    let home = tempdir().unwrap();
+    lm_unconfigured(home.path())
+        .args(["config", "show"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("not configured").and(predicate::str::contains("config.json")),
+        );
+}
+
+#[test]
+fn config_set_data_dir_loads_tasks() {
+    let home = tempdir().unwrap();
+    let data = tempdir().unwrap();
+    write_dataset(data.path(), SAMPLE_TASKS);
+    lm_unconfigured(home.path())
+        .args(["config", "set", data.path().to_str().unwrap()])
+        .assert()
+        .success();
+    let value =
+        stdout_json(lm_unconfigured(home.path()).args(["list", "--today", "2026-06-06", "--json"]));
+    let got = ids(&value);
+    assert_eq!(got.len(), 3, "ids: {got:?}");
+    for id in ["groceries", "clean-drains", "blow-out-sprinklers"] {
+        assert!(got.iter().any(|g| g == id), "missing {id} in {got:?}");
+    }
+}

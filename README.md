@@ -29,8 +29,33 @@ cargo fmt
 
 ## Data
 
-`lm` reads its data from the directory named by the `LM_DATA_DIR` environment
-variable, which defaults to `./data`. The directory holds three files:
+This repository ships only the sample dataset under `examples/`; point
+`LM_DATA_DIR` at it to try the tool out without configuring anything:
+
+```sh
+LM_DATA_DIR=examples lm list
+```
+
+Your real maintenance log lives in a separate, user-configured directory. `lm`
+resolves which directory to use with the precedence:
+
+1. the `LM_DATA_DIR` environment variable (if set and non-empty), then
+2. the `data_dir` key of `~/.life-maintenance/config.json`
+   (set it with `lm config set <path>`), then
+3. an error if neither is configured.
+
+Set it once with:
+
+```sh
+lm config set ~/life-log
+lm config show          # confirm the resolved dir and where it came from
+```
+
+The data directory may be its own git repository, or a subdirectory inside an
+existing one. `lm done` and `lm punt` commit only the data files they touch, so
+either layout works.
+
+The directory holds three files:
 
 - `tasks.yaml` — the recurring tasks.
 - `vendors.yaml` — the vendor directory referenced by tasks.
@@ -88,6 +113,10 @@ date, and `--json` to emit machine-readable output on stdout.
 - `lm export` — print the full denormalized dataset as JSON.
 - `lm report <spend-by-task|per-year|overdue-count>` — print a built-in summary
   report.
+- `lm config show [--json]` — print the resolved data directory and its source
+  (the `LM_DATA_DIR` env, or the config file path).
+- `lm config set <path>` — store `<path>` as the data directory in
+  `~/.life-maintenance/config.json`.
 
 ## Seasonal tasks
 

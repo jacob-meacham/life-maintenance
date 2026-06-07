@@ -5,13 +5,14 @@
 //! diagnostics and errors go to stderr; stdout is the machine-parseable
 //! channel for `--json` consumers.
 
-use std::path::PathBuf;
+use std::path::Path;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use jiff::civil::Date;
 use serde_json::{json, Value};
 
+use crate::config::{self, DataDirSource};
 use crate::error::Error;
 use crate::model::{Completion, Vendor};
 use crate::service::{ReportKind, Service};
@@ -124,6 +125,27 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Inspect or set the data-directory configuration.
+    Config {
+        #[command(subcommand)]
+        command: ConfigCmd,
+    },
+}
+
+/// Subcommands of `lm config`.
+#[derive(Debug, Subcommand)]
+enum ConfigCmd {
+    /// Show the resolved data directory and where it came from.
+    Show {
+        /// Emit JSON instead of text.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Set the data directory in ~/.life-maintenance/config.json.
+    Set {
+        /// The data directory path to store (verbatim).
+        path: String,
+    },
 }
 
 /// The CLI form of [`ReportKind`], rendered in kebab-case.
@@ -189,10 +211,14 @@ pub fn main() -> ExitCode {
     }
 }
 
-/// Resolve the data directory from `LM_DATA_DIR`, defaulting to `./data`.
-fn data_dir() -> DataDir {
-    let path = std::env::var("LM_DATA_DIR").map_or_else(|_| PathBuf::from("data"), PathBuf::from);
-    DataDir::new(path)
+/// Build a [`Service`] backed by the resolved data directory.
+///
+/// Resolution follows `config::resolve_data_dir` (`LM_DATA_DIR` env → config
+/// file → error). When the data dir is not configured this returns an error
+/// whose message tells the user how to fix it; `main` prints it to stderr.
+fn service() -> Result<Service, CliError> {
+    let (path, _source) = config::resolve_data_dir()?;
+    Ok(Service::new(DataDir::new(path)))
 }
 
 /// The current civil date in the system timezone.
@@ -250,8 +276,10 @@ fn parse_cents(s: &str) -> Result<i64, String> {
 }
 
 /// Dispatch a parsed command to its handler.
+///
+/// Commands that touch the data directory resolve it lazily via [`service`],
+/// so `config` (which is diagnostic) does not require a configured data dir.
 fn run(command: &Command) -> Result<(), CliError> {
-    let service = Service::new(data_dir());
     match command {
         Command::List {
             query,
@@ -260,14 +288,14 @@ fn run(command: &Command) -> Result<(), CliError> {
             today,
             json,
         } => cmd_list(
-            &service,
+            &service()?,
             query.as_deref(),
             *due,
             *overdue,
             today.as_deref(),
             *json,
         ),
-        Command::Due { today, json } => cmd_due(&service, today.as_deref(), *json),
+        Command::Due { today, json } => cmd_due(&service()?, today.as_deref(), *json),
         Command::Done {
             id,
             on,
@@ -277,7 +305,7 @@ fn run(command: &Command) -> Result<(), CliError> {
             today,
             no_commit,
         } => cmd_done(
-            &service,
+            &service()?,
             id,
             on.as_deref(),
             by,
@@ -290,16 +318,83 @@ fn run(command: &Command) -> Result<(), CliError> {
             id,
             to_date,
             no_commit,
-        } => cmd_punt(&service, id, to_date, *no_commit),
+        } => cmd_punt(&service()?, id, to_date, *no_commit),
         Command::History { id, since, json } => {
-            cmd_history(&service, id.as_deref(), since.as_deref(), *json)
+            cmd_history(&service()?, id.as_deref(), since.as_deref(), *json)
         }
-        Command::Vendors { json } => cmd_vendors(&service, *json),
-        Command::Export { today } => cmd_export(&service, today.as_deref()),
+        Command::Vendors { json } => cmd_vendors(&service()?, *json),
+        Command::Export { today } => cmd_export(&service()?, today.as_deref()),
         Command::Report { kind, today, json } => {
-            cmd_report(&service, *kind, today.as_deref(), *json)
+            cmd_report(&service()?, *kind, today.as_deref(), *json)
+        }
+        Command::Config { command } => cmd_config(command),
+    }
+}
+
+/// Handle `config show` / `config set`.
+fn cmd_config(command: &ConfigCmd) -> Result<(), CliError> {
+    match command {
+        ConfigCmd::Show { json } => cmd_config_show(*json),
+        ConfigCmd::Set { path } => cmd_config_set(path),
+    }
+}
+
+/// Handle `config show`.
+///
+/// Diagnostic: an unconfigured data dir is reported as "unset" and exits
+/// successfully rather than failing. Errors that prevent even locating the
+/// config file (e.g. `HOME` unset) still propagate to stderr + failure.
+fn cmd_config_show(json: bool) -> Result<(), CliError> {
+    let Ok((dir, source)) = config::resolve_data_dir() else {
+        return config_show_unconfigured(json);
+    };
+    let dir = dir.display().to_string();
+    match source {
+        DataDirSource::Env => {
+            if json {
+                print_pretty(&json!({ "data_dir": dir, "source": "env" }));
+            } else {
+                println!("data_dir: {dir}");
+                println!("source: LM_DATA_DIR env");
+            }
+        }
+        DataDirSource::ConfigFile(path) => {
+            let path = path.display().to_string();
+            if json {
+                print_pretty(&json!({ "data_dir": dir, "source": "config", "config_path": path }));
+            } else {
+                println!("data_dir: {dir}");
+                println!("source: {path}");
+            }
         }
     }
+    Ok(())
+}
+
+/// Report (to stdout, exit success) that no data dir is configured.
+fn config_show_unconfigured(json: bool) -> Result<(), CliError> {
+    let home = config::home_dir()?;
+    let config_path = config::config_file_in(&home).display().to_string();
+    if json {
+        print_pretty(&json!({
+            "data_dir": Value::Null,
+            "configured": false,
+            "config_path": config_path,
+        }));
+    } else {
+        println!("data_dir: not configured");
+        println!("config file: {config_path}");
+        println!("set it with: LM_DATA_DIR=<path> or `lm config set <path>`");
+    }
+    Ok(())
+}
+
+/// Handle `config set`.
+fn cmd_config_set(path: &str) -> Result<(), CliError> {
+    let home = config::home_dir()?;
+    let written = config::write_data_dir(&home, Path::new(path))?;
+    println!("wrote data_dir = {path} to {}", written.display());
+    Ok(())
 }
 
 /// Handle `list`.
