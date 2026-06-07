@@ -2,6 +2,7 @@
 
 pub mod error;
 pub mod schedule;
+pub mod schema;
 
 /// The crate version, from Cargo.
 #[must_use]
