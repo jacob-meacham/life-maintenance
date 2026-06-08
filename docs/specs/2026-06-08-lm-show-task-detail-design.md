@@ -37,7 +37,7 @@ available via `lm history --id <id>`, and the text view points at it.
 ```
 clean-drains  Clean drains
   status:     overdue (due 2026-05-01, last done 2025-05-01)
-  recurrence: every yearly
+  recurrence: yearly (on 10-15)
   prep opens: 2026-04-17
   prep:
     - clear the area
@@ -50,6 +50,8 @@ clean-drains  Clean drains
 
 Rules:
 
+- The `recurrence:` line renders `<every>`, appending ` (on <on>)` only when
+  the task has a fixed `on` anchor.
 - The `prep opens:` line appears only when the task has a lead time
   (`prep_due` is present).
 - The `prep:`, `notes:`, and `vendor:` sections are omitted entirely when
