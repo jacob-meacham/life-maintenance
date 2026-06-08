@@ -5,7 +5,7 @@ use jiff::Span;
 
 use crate::error::Result;
 use crate::schedule::{parse_interval, parse_schedule, Schedule};
-use crate::schema::{RawCompletion, RawPunt, RawTask, RawVendor};
+use crate::schema::{OnSpec, RawCompletion, RawPunt, RawTask, RawVendor};
 
 /// A service vendor/contact referenced by tasks.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,12 +36,24 @@ impl Vendor {
 pub struct Task {
     pub id: String,
     pub name: String,
+    /// The raw `every:` cadence string, verbatim, for display.
+    pub every: String,
+    /// The raw `on:` anchor stringified (`"15"` or `"10-15"`), for display.
+    pub on: Option<String>,
     pub schedule: Schedule,
     pub lead_time: Option<Span>,
     pub prep: Vec<String>,
     pub vendor: Option<String>,
     pub notes: Option<String>,
     pub start: Option<Date>,
+}
+
+/// Render a raw `on:` spec to its canonical display string.
+fn on_to_string(on: &OnSpec) -> String {
+    match on {
+        OnSpec::Day(d) => d.to_string(),
+        OnSpec::MonthDay(s) => s.clone(),
+    }
 }
 
 impl Task {
@@ -56,9 +68,12 @@ impl Task {
             None => None,
         };
         let schedule = parse_schedule(&raw.every, raw.on.as_ref())?;
+        let on = raw.on.as_ref().map(on_to_string);
         Ok(Self {
             id: raw.id,
             name: raw.name,
+            every: raw.every,
+            on,
             schedule,
             lead_time,
             prep: raw.prep,
@@ -192,5 +207,30 @@ mod tests {
         let punt = Punt::from_raw(raw);
         assert_eq!(punt.punt_to, date(2027, 4, 1));
         assert_eq!(punt.via, "cli");
+    }
+
+    #[test]
+    fn task_from_raw_carries_raw_recurrence_relative() {
+        let raw: RawTask = serde_yaml::from_str("id: x\nname: X\nevery: 6 months\n").unwrap();
+        let task = Task::from_raw(raw).unwrap();
+        assert_eq!(task.every, "6 months");
+        assert_eq!(task.on, None);
+    }
+
+    #[test]
+    fn task_from_raw_carries_raw_recurrence_fixed_monthday() {
+        let raw: RawTask =
+            serde_yaml::from_str("id: s\nname: S\nevery: yearly\non: \"10-15\"\n").unwrap();
+        let task = Task::from_raw(raw).unwrap();
+        assert_eq!(task.every, "yearly");
+        assert_eq!(task.on, Some("10-15".to_string()));
+    }
+
+    #[test]
+    fn task_from_raw_carries_raw_recurrence_fixed_day() {
+        let raw: RawTask =
+            serde_yaml::from_str("id: m\nname: M\nevery: monthly\non: 15\n").unwrap();
+        let task = Task::from_raw(raw).unwrap();
+        assert_eq!(task.on, Some("15".to_string()));
     }
 }
