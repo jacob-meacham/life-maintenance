@@ -15,7 +15,7 @@ use serde_json::{json, Value};
 use crate::config::{self, DataDirSource};
 use crate::error::Error;
 use crate::model::{Completion, Vendor};
-use crate::service::{ReportKind, Service};
+use crate::service::{ReportKind, Service, TaskDetail};
 use crate::status::{Bucket, TaskStatus};
 use crate::store::DataDir;
 
@@ -30,6 +30,17 @@ struct Cli {
 /// The set of top-level subcommands.
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Show the full detail of a single task.
+    Show {
+        /// The task id to inspect.
+        id: String,
+        /// Treat this date as today (YYYY-MM-DD).
+        #[arg(long)]
+        today: Option<String>,
+        /// Emit JSON instead of text.
+        #[arg(long)]
+        json: bool,
+    },
     /// List tasks and their status.
     List {
         /// Filter to tasks matching this query (id, name, notes, vendor).
@@ -281,6 +292,7 @@ fn parse_cents(s: &str) -> Result<i64, String> {
 /// so `config` (which is diagnostic) does not require a configured data dir.
 fn run(command: &Command) -> Result<(), CliError> {
     match command {
+        Command::Show { id, today, json } => cmd_show(&service()?, id, today.as_deref(), *json),
         Command::List {
             query,
             due,
@@ -438,6 +450,18 @@ fn cmd_due(service: &Service, today: Option<&str>, json: bool) -> Result<(), Cli
     Ok(())
 }
 
+/// Handle `show`.
+fn cmd_show(service: &Service, id: &str, today: Option<&str>, json: bool) -> Result<(), CliError> {
+    let today = resolve_today(today)?;
+    let detail = service.show(today, id)?;
+    if json {
+        show_json(&detail);
+    } else {
+        show_text(&detail);
+    }
+    Ok(())
+}
+
 /// Handle `done`.
 #[allow(clippy::too_many_arguments)] // each argument is a distinct completion field
 fn cmd_done(
@@ -530,6 +554,14 @@ fn bucket_marker(bucket: Bucket) -> &'static str {
     }
 }
 
+/// The lowercase label of a bucket (e.g. "overdue"), via its serde encoding.
+fn bucket_label(bucket: Bucket) -> String {
+    serde_json::to_value(bucket)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_string))
+        .unwrap_or_default()
+}
+
 /// Render a task status as a JSON object.
 fn status_json(status: &TaskStatus) -> Value {
     json!({
@@ -562,6 +594,88 @@ fn print_statuses(statuses: &[TaskStatus], json: bool) {
             );
         }
     }
+}
+
+/// Render a `TaskDetail` as the documented single-object JSON.
+fn show_json(detail: &TaskDetail) {
+    let status = &detail.status;
+    let task = &status.task;
+    let vendor = detail.vendor.as_ref().map_or(Value::Null, |v| {
+        json!({
+            "id": v.id,
+            "name": v.name,
+            "phone": v.phone,
+            "email": v.email,
+            "notes": v.notes,
+        })
+    });
+    print_pretty(&json!({
+        "id": task.id,
+        "name": task.name,
+        "bucket": status.bucket,
+        "last_done": status.last_done.map(|d| d.to_string()),
+        "next_due": status.next_due.to_string(),
+        "prep_due": status.prep_due.map(|d| d.to_string()),
+        "recurrence": { "every": task.every, "on": task.on },
+        "prep": task.prep,
+        "notes": task.notes,
+        "vendor": vendor,
+    }));
+}
+
+/// Render a `TaskDetail` as the human-readable text layout.
+fn show_text(detail: &TaskDetail) {
+    let status = &detail.status;
+    let task = &status.task;
+
+    println!("{}  {}", task.id, task.name);
+
+    let last = status
+        .last_done
+        .map_or(String::new(), |d| format!(", last done {d}"));
+    println!(
+        "  status:     {} (due {}{last})",
+        bucket_label(status.bucket),
+        status.next_due,
+    );
+
+    let on = task
+        .on
+        .as_deref()
+        .map_or(String::new(), |o| format!(" (on {o})"));
+    println!("  recurrence: {}{on}", task.every);
+
+    if let Some(prep_due) = status.prep_due {
+        println!("  prep opens: {prep_due}");
+    }
+
+    if !task.prep.is_empty() {
+        println!("  prep:");
+        for step in &task.prep {
+            println!("    - {step}");
+        }
+    }
+
+    if let Some(notes) = &task.notes {
+        println!("  notes:      {notes}");
+    }
+
+    if let Some(v) = &detail.vendor {
+        use std::fmt::Write as _;
+        let mut line = format!("  vendor:     {}", v.name);
+        if let Some(phone) = &v.phone {
+            write!(line, "  {phone}").unwrap();
+        }
+        if let Some(email) = &v.email {
+            write!(line, "  {email}").unwrap();
+        }
+        println!("{line}");
+        if let Some(notes) = &v.notes {
+            println!("              {notes}");
+        }
+    }
+
+    println!("  (history: lm history --id {})", task.id);
 }
 
 /// Render a completion as a JSON object.

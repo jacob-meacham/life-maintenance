@@ -329,6 +329,62 @@ fn config_show_text_unconfigured_succeeds_and_shows_path() {
         );
 }
 
+const PREP_TASKS: &str = "\
+- id: clean-drains
+  name: Clean drains
+  every: yearly
+  on: \"10-15\"
+  lead_time: 2 weeks
+  vendor: roto-rooter
+  notes: access panel is behind the dryer
+  prep:
+    - clear the area
+    - move boxes
+";
+
+#[test]
+fn show_text_includes_prep_notes_and_vendor() {
+    let dir = tempdir().unwrap();
+    write_dataset(dir.path(), PREP_TASKS);
+    lm(dir.path())
+        .args(["show", "clean-drains", "--today", "2026-06-06"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("clean-drains"))
+        .stdout(predicate::str::contains("yearly (on 10-15)"))
+        .stdout(predicate::str::contains("clear the area"))
+        .stdout(predicate::str::contains("access panel is behind the dryer"))
+        .stdout(predicate::str::contains("Roto-Rooter"))
+        .stdout(predicate::str::contains("lm history --id clean-drains"));
+}
+
+#[test]
+fn show_json_has_documented_shape() {
+    let dir = sample_dir();
+    let value = stdout_json(lm(dir.path()).args([
+        "show",
+        "clean-drains",
+        "--today",
+        "2026-06-06",
+        "--json",
+    ]));
+    assert_eq!(value["id"], "clean-drains");
+    assert_eq!(value["bucket"], "overdue");
+    assert_eq!(value["recurrence"]["every"], "yearly");
+    assert_eq!(value["vendor"]["name"], "Roto-Rooter");
+    assert!(value["prep"].is_array());
+}
+
+#[test]
+fn show_unknown_id_fails_with_message() {
+    let dir = sample_dir();
+    lm(dir.path())
+        .args(["show", "nope"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unknown task id nope"));
+}
+
 #[test]
 fn config_set_data_dir_loads_tasks() {
     let home = tempdir().unwrap();
