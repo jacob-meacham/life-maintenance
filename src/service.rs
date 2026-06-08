@@ -96,6 +96,9 @@ impl Service {
             .into_iter()
             .find(|s| s.task.id == id)
             .ok_or_else(|| Error::DataFile(format!("unknown task id {id}")))?;
+        // `load_all` validates every task→vendor reference dataset-wide, so a
+        // task with a vendor id always resolves here; the `None` from `find`
+        // is reachable only when the task has no vendor at all.
         let vendor = status
             .task
             .vendor

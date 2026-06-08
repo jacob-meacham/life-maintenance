@@ -352,6 +352,7 @@ fn show_text_includes_prep_notes_and_vendor() {
         .success()
         .stdout(predicate::str::contains("clean-drains"))
         .stdout(predicate::str::contains("yearly (on 10-15)"))
+        .stdout(predicate::str::contains("prep opens:"))
         .stdout(predicate::str::contains("clear the area"))
         .stdout(predicate::str::contains("access panel is behind the dryer"))
         .stdout(predicate::str::contains("Roto-Rooter"))
