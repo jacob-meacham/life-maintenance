@@ -581,10 +581,7 @@ fn print_statuses(statuses: &[TaskStatus], json: bool) {
         println!("{}", Value::Array(rows));
     } else {
         for status in statuses {
-            let bucket = serde_json::to_value(status.bucket)
-                .ok()
-                .and_then(|v| v.as_str().map(str::to_string))
-                .unwrap_or_default();
+            let bucket = bucket_label(status.bucket);
             println!(
                 "{} {}  {}  {}",
                 bucket_marker(status.bucket),
