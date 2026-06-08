@@ -30,6 +30,16 @@ pub struct Service {
     pub data_dir: DataDir,
 }
 
+/// The full detail of a single task: its computed status plus the resolved
+/// vendor (if the task references one).
+#[derive(Debug, Clone)]
+pub struct TaskDetail {
+    /// The task's computed status (owns the full `Task`).
+    pub status: TaskStatus,
+    /// The vendor referenced by the task, resolved from the directory.
+    pub vendor: Option<Vendor>,
+}
+
 impl Service {
     /// Create a service backed by `data_dir`.
     #[must_use]
@@ -69,6 +79,29 @@ impl Service {
             statuses.retain(|s| buckets.contains(&s.bucket));
         }
         Ok(statuses)
+    }
+
+    /// The full detail of a single task for `today`: its status plus resolved
+    /// vendor.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::DataFile`] if `id` matches no task, and propagates any
+    /// error from the store loaders or the status engine.
+    pub fn show(&self, today: Date, id: &str) -> Result<TaskDetail> {
+        let (tasks, vendors, _completions) = store::load_all(&self.data_dir)?;
+        let events = store::load_events(&self.data_dir)?;
+        let statuses = compute_status(&tasks, &events, today)?;
+        let status = statuses
+            .into_iter()
+            .find(|s| s.task.id == id)
+            .ok_or_else(|| Error::DataFile(format!("unknown task id {id}")))?;
+        let vendor = status
+            .task
+            .vendor
+            .as_deref()
+            .and_then(|vid| vendors.iter().find(|v| v.id == vid).cloned());
+        Ok(TaskDetail { status, vendor })
     }
 
     /// Tasks that are overdue, due, or in their prep window.
@@ -708,6 +741,42 @@ mod tests {
         // its 2-week prep window before 2026-10-15.
         assert_eq!(report["prep"], 1);
         assert_eq!(report["overdue"], 2);
+    }
+
+    #[test]
+    fn show_returns_detail_with_resolved_vendor() {
+        let (_dir, svc) = service();
+        let detail = svc.show(TODAY, "clean-drains").unwrap();
+        assert_eq!(detail.status.task.id, "clean-drains");
+        assert_eq!(detail.status.bucket, Bucket::Overdue);
+        let vendor = detail.vendor.expect("vendor resolved");
+        assert_eq!(vendor.id, "roto-rooter");
+        assert_eq!(vendor.name, "Roto-Rooter");
+    }
+
+    #[test]
+    fn show_task_without_vendor_has_none() {
+        let (_dir, svc) = service();
+        let detail = svc.show(TODAY, "groceries").unwrap();
+        assert!(detail.vendor.is_none());
+        assert_eq!(detail.status.task.every, "weekly");
+        assert_eq!(detail.status.task.on, None);
+    }
+
+    #[test]
+    fn show_fixed_task_carries_on_anchor() {
+        let (_dir, svc) = service();
+        let detail = svc.show(TODAY, "blow-out-sprinklers").unwrap();
+        assert_eq!(detail.status.task.on, Some("10-15".to_string()));
+    }
+
+    #[test]
+    fn show_unknown_id_is_data_file_error() {
+        let (_dir, svc) = service();
+        match svc.show(TODAY, "nope") {
+            Err(Error::DataFile(msg)) => assert!(msg.contains("nope"), "msg: {msg}"),
+            other => panic!("expected DataFile, got {other:?}"),
+        }
     }
 
     #[test]
