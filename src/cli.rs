@@ -8,7 +8,8 @@
 use std::path::Path;
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
+use clap_complete::engine::{ArgValueCandidates, CompletionCandidate};
 use jiff::civil::Date;
 use serde_json::{json, Value};
 
@@ -17,7 +18,7 @@ use crate::error::Error;
 use crate::model::{Completion, Vendor};
 use crate::service::{ReportKind, Service, TaskDetail};
 use crate::status::{Bucket, TaskStatus};
-use crate::store::DataDir;
+use crate::store::{self, DataDir};
 
 /// Track and complete recurring home/life maintenance tasks.
 #[derive(Debug, Parser)]
@@ -33,6 +34,7 @@ enum Command {
     /// Show the full detail of a single task.
     Show {
         /// The task id to inspect.
+        #[arg(add = ArgValueCandidates::new(task_id_candidates))]
         id: String,
         /// Treat this date as today (YYYY-MM-DD).
         #[arg(long)]
@@ -71,12 +73,13 @@ enum Command {
     /// Record a task as completed.
     Done {
         /// The task id to complete.
+        #[arg(add = ArgValueCandidates::new(task_id_candidates))]
         id: String,
         /// The completion date (YYYY-MM-DD); defaults to today.
         #[arg(long)]
         on: Option<String>,
         /// Who performed the task.
-        #[arg(long, default_value = "self")]
+        #[arg(long, default_value = "self", add = ArgValueCandidates::new(vendor_candidates))]
         by: String,
         /// The cost in dollars (e.g. 42.00).
         #[arg(long)]
@@ -94,6 +97,7 @@ enum Command {
     /// Defer a task's next occurrence to an explicit date.
     Punt {
         /// The task id to punt.
+        #[arg(add = ArgValueCandidates::new(task_id_candidates))]
         id: String,
         /// The date to defer to (YYYY-MM-DD).
         to_date: String,
@@ -104,7 +108,7 @@ enum Command {
     /// Show completion history.
     History {
         /// Filter to a single task id.
-        #[arg(long)]
+        #[arg(long, add = ArgValueCandidates::new(task_id_candidates))]
         id: Option<String>,
         /// Only show completions on or after this date (YYYY-MM-DD).
         #[arg(long)]
@@ -212,6 +216,10 @@ impl From<Error> for CliError {
 /// [`ExitCode::SUCCESS`].
 #[must_use]
 pub fn main() -> ExitCode {
+    // Dynamic shell completion: when invoked by a shell's completer (the
+    // `COMPLETE` env var is set), emit candidates and exit before normal
+    // parsing. Otherwise this is a no-op.
+    clap_complete::CompleteEnv::with_factory(Cli::command).complete();
     let cli = Cli::parse();
     match run(&cli.command) {
         Ok(()) => ExitCode::SUCCESS,
@@ -220,6 +228,40 @@ pub fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// Completion candidates for a task-id argument: every task id in the
+/// configured data directory, with its name as help text.
+///
+/// The shell invokes this in a child process during tab completion, so it
+/// must never fail or print diagnostics; any error yields no candidates.
+fn task_id_candidates() -> Vec<CompletionCandidate> {
+    let Ok((path, _)) = config::resolve_data_dir() else {
+        return Vec::new();
+    };
+    let Ok(tasks) = store::load_tasks(&DataDir::new(path)) else {
+        return Vec::new();
+    };
+    tasks
+        .into_iter()
+        .map(|t| CompletionCandidate::new(t.id).help(Some(t.name.into())))
+        .collect()
+}
+
+/// Completion candidates for a vendor argument: every vendor id in the
+/// configured data directory, with its name as help text. Like
+/// [`task_id_candidates`], this is infallible and silent.
+fn vendor_candidates() -> Vec<CompletionCandidate> {
+    let Ok((path, _)) = config::resolve_data_dir() else {
+        return Vec::new();
+    };
+    let Ok(vendors) = store::load_vendors(&DataDir::new(path)) else {
+        return Vec::new();
+    };
+    vendors
+        .into_iter()
+        .map(|v| CompletionCandidate::new(v.id).help(Some(v.name.into())))
+        .collect()
 }
 
 /// Build a [`Service`] backed by the resolved data directory.

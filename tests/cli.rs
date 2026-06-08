@@ -403,3 +403,70 @@ fn config_set_data_dir_loads_tasks() {
         assert!(got.iter().any(|g| g == id), "missing {id} in {got:?}");
     }
 }
+
+#[test]
+fn completions_emit_bash_registration_script() {
+    let dir = sample_dir();
+    lm(dir.path())
+        .env("COMPLETE", "bash")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("complete").and(predicate::str::contains("lm")));
+}
+
+/// Run a dynamic-completion request the way a shell's completer does and
+/// return the candidate strings. `words` are the full command-line words
+/// (including the `lm` binary at index 0); `cword` is the index being
+/// completed.
+fn completions(root: &Path, cword: usize, words: &[&str]) -> Vec<String> {
+    let mut cmd = lm(root);
+    cmd.env("COMPLETE", "bash")
+        .env("_CLAP_COMPLETE_INDEX", cword.to_string())
+        .arg("--")
+        .args(words);
+    let out = cmd.assert().success().get_output().stdout.clone();
+    String::from_utf8(out)
+        .unwrap()
+        .lines()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+#[test]
+fn completions_offer_task_ids_for_show() {
+    let dir = sample_dir();
+    let got = completions(dir.path(), 2, &["lm", "show", ""]);
+    for id in ["groceries", "clean-drains", "blow-out-sprinklers"] {
+        assert!(got.iter().any(|g| g == id), "missing {id} in {got:?}");
+    }
+}
+
+#[test]
+fn completions_offer_task_ids_for_done() {
+    let dir = sample_dir();
+    let got = completions(dir.path(), 2, &["lm", "done", ""]);
+    assert!(got.iter().any(|g| g == "groceries"), "got: {got:?}");
+}
+
+#[test]
+fn completions_offer_task_ids_for_punt() {
+    let dir = sample_dir();
+    let got = completions(dir.path(), 2, &["lm", "punt", ""]);
+    assert!(got.iter().any(|g| g == "groceries"), "got: {got:?}");
+}
+
+#[test]
+fn completions_offer_task_ids_for_history_id_flag() {
+    let dir = sample_dir();
+    let got = completions(dir.path(), 3, &["lm", "history", "--id", ""]);
+    assert!(got.iter().any(|g| g == "groceries"), "got: {got:?}");
+}
+
+#[test]
+fn completions_offer_vendor_names_for_done_by() {
+    let dir = sample_dir();
+    let got = completions(dir.path(), 4, &["lm", "done", "groceries", "--by", ""]);
+    assert!(got.iter().any(|g| g == "roto-rooter"), "got: {got:?}");
+}

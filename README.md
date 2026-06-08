@@ -33,6 +33,32 @@ After installing, point `lm` at your data with `lm config set <path>` (see
 [Data](#data)). To hack on the tool instead, clone and build from source —
 see [Build](#build).
 
+## Shell completions
+
+`lm` generates its own completions at runtime, so they always match the
+installed version — and they complete *your* data: task ids (for `show`,
+`done`, `punt`, and `history --id`) and vendor ids (for `done --by`) are pulled
+live from the configured data directory.
+
+Source the registration script for your shell from your shell's startup file:
+
+```sh
+# bash — in ~/.bashrc
+source <(COMPLETE=bash lm)
+
+# zsh — in ~/.zshrc
+source <(COMPLETE=zsh lm)
+
+# fish — in ~/.config/fish/config.fish
+COMPLETE=fish lm | source
+```
+
+`elvish` and `powershell` are supported too (set `COMPLETE` accordingly). Open
+a new shell, then `lm show <TAB>` completes task ids. Completion reads the data
+directory resolved from `LM_DATA_DIR` or your config file, so set that up
+first; if it can't be read, completion simply offers nothing rather than
+erroring.
+
 ## Build
 
 ```sh
