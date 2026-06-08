@@ -126,6 +126,9 @@ All read commands accept `--today <YYYY-MM-DD>` to evaluate status as of a given
 date, and `--json` to emit machine-readable output on stdout.
 
 - `lm list [-q <query>] [--due] [--overdue]` — list tasks and their status.
+- `lm show <id>` — show one task's full detail: status, schedule, prep
+  checklist, notes, and vendor contact. (Use `lm history --id <id>` for its
+  completion history.)
 - `lm due` — list tasks that are overdue, due, or inside their prep window.
 - `lm done <id> [--on <date>] [--by <who>] [--cost <n>] [--note <text>]` —
   record a task as completed.
